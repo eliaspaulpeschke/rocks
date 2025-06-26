@@ -2,7 +2,7 @@
 
 module Main where
 
-import Raylib.Core (clearBackground, disableCursor, isKeyPressed, isKeyDown, enableCursor, getKeyPressed)
+import Raylib.Core (clearBackground, disableCursor, isKeyPressed, isKeyDown, enableCursor, getKeyPressed, loadRandomSequence, setRandomSeed, getRandomValue)
 import Raylib.Core.Camera (updateCamera)
 import Raylib.Core.Models (drawGrid,  drawLine3D)
 import Raylib.Types (Camera3D (Camera3D), CameraMode (CameraModeFirstPerson), CameraProjection (CameraPerspective), pattern Vector3, Camera2D (Camera2D), pattern Vector2, Rectangle (Rectangle), KeyboardKey (KeyUp, KeyDown, KeyLeftControl, KeyRightControl, KeyM, KeyLeft, KeyR, KeyRight), Color)
@@ -11,8 +11,9 @@ import Raylib.Util.Colors (orange, white, black)
 import Linear (V3(V3), V2(V2))
 import Raylib.Util.Camera (cameraMove)
 import Raylib.Core.Textures (colorAlpha)
-import Raylib.Core.Shapes (drawTriangleLines)
+import Raylib.Core.Shapes (drawTriangleLines, drawLineV)
 import Raylib.Util.Math (vector2Rotate)
+import Data.List.Split (divvy)
 
 w :: Float
 w = 1400
@@ -26,21 +27,33 @@ donutClamp v lower upper
     | v > upper = lower
     | otherwise = v
 
+data Object = Object {
+      objPos :: V2 Float
+    , objRot :: Float
+    , objVel :: V2 Float
+    , objRotVel :: Float
+}
+
+data Rock = Rock {
+      rockData :: Object
+    , rockVerts :: [(Float, Float)] 
+}
+
 data AppState = AppState {
       camera2D :: Camera2D
-    , shipPos :: V2 Float
-    , shipRot :: Float
-    , shipVel :: V2 Float 
-    , shipRotVel :: Float
-    }
+    , shipData :: Object
+    , rockList :: [Rock]
+}
 
 initialAppState :: AppState
 initialAppState = AppState {
       camera2D = Camera2D (V2 (w/2) (h/2)) (V2 (w/2) (h/2)) 0 1.0 
-    , shipPos = V2 (w/2) (h/2) 
-    , shipRot = 0
-    , shipVel = V2 0 0 
-    , shipRotVel = 0
+    , shipData = Object 
+        { objPos = V2 (w/2) (h/2) 
+        , objRot = -1
+        , objVel = V2 0 0 
+        , objRotVel = 0 }
+    , rockList = [ ]
 }
 
 keyboardVal :: KeyboardKey -> a -> a -> IO a
@@ -48,12 +61,12 @@ keyboardVal k up down = do
     d <- isKeyDown k 
     pure $ if d then down else up 
 
-drawShip :: V2 Float -> Float -> IO ()
-drawShip pos rot = do
+drawShip :: Object -> IO ()
+drawShip dat = do
     drawTriangleLines tip right left white
     drawTriangleLines tip2 right2 left2 white
     where
-    mk x = pos + vector2Rotate x rot 
+    mk x = objPos dat + vector2Rotate x (objRot dat)
     tip = mk $ V2 0 25
     right = mk $ V2 12 (-7)
     left = mk $ V2 (-12) (-7)
@@ -61,11 +74,30 @@ drawShip pos rot = do
     right2 = mk $ V2 18 (-5)
     left2 = mk $ V2 (-18) (-5) 
 
+makeRock :: Object -> IO Rock
+makeRock dat = do
+    verts <- mapM (\_ -> getRandomValue 5 10) [0..11]
+    pure Rock { rockData = dat
+        , rockVerts = snd (foldr (\v (x, l) -> (x + (pi/6), (fromIntegral v * 5, x):l)) (0, []) verts)
+        }
 
-
+drawRock :: Rock -> IO ()
+drawRock rock = do
+    case length verts of
+        l | l < 3 -> pure () 
+        _ -> mapM_ line $ [head verts, last verts] : divvy 2 1 verts
+    pure ()
+    where
+    verts = rockVerts rock
+    obj = rockData rock
+    mk (v, x) = objPos obj + vector2Rotate (vector2Rotate (V2 0 v) x) (objRot obj)
+    line (a:b:_) = drawLineV (mk a) (mk b) white
+    line _ = pure ()
 
 main :: IO ()
 main = do
+  setRandomSeed 15
+  rocks <- makeRock $ Object {objPos=V2 166 455, objRot=0, objVel=0, objRotVel=0}
   withWindow
     (floor w) 
     (floor h)
@@ -76,17 +108,19 @@ main = do
           ( \appstate ->
               let 
                 cam2D = camera2D appstate 
-                pos = shipPos appstate
-                rot = shipRot appstate
-                vel = shipVel appstate
-                rotVel = shipRotVel appstate
+                shipdata = shipData appstate
+                pos = objPos shipdata
+                rot = objRot shipdata
+                vel = objVel shipdata
+                rotVel = objRotVel shipdata
               in do
               drawing
                 ( do
                     clearBackground black 
                     mode2D cam2D 
                        ( do
-                           drawShip pos rot
+                           drawShip shipdata
+                           drawRock rocks
                            pure ()
                        ) 
                 )
@@ -103,7 +137,10 @@ main = do
                                           , b * 0.01)) )
                             defaultK v_
               let p = (\(V2 x y) -> V2 (donutClamp x 0 w) (donutClamp y 0 h)) $ pos + vel
-              pure appstate {shipRot = newRot, shipPos = p, shipVel = vel + fst v, shipRotVel = rotVel + snd v }
+              pure appstate { 
+                  shipData = shipdata {
+                     objRot = newRot, objPos = p, objVel = vel + fst v, objRotVel = rotVel + snd v }
+                }
           )
           initialAppState 
     )

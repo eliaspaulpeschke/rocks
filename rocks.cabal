@@ -71,7 +71,8 @@ executable hs-raylib
         base,
         linear,
         h-raylib,
-        mtl
+        mtl,
+        split
 
     -- Directories containing source files.
     hs-source-dirs:   
