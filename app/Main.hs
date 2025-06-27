@@ -14,6 +14,7 @@ import Raylib.Core.Textures (colorAlpha)
 import Raylib.Core.Shapes (drawTriangleLines, drawLineV)
 import Raylib.Util.Math (vector2Rotate)
 import Data.List.Split (divvy)
+import Control.Monad (foldM)
 
 w :: Float
 w = 1400
@@ -22,7 +23,7 @@ h :: Float
 h = 800
 
 donutClamp :: Float -> Float -> Float -> Float
-donutClamp v lower upper
+donutClamp lower upper v
     | v < lower = upper
     | v > upper = lower
     | otherwise = v
@@ -74,9 +75,35 @@ drawShip dat = do
     right2 = mk $ V2 18 (-5)
     left2 = mk $ V2 (-18) (-5) 
 
+randomRock :: Object -> [Rock] -> IO Rock
+randomRock shipObj otherRocks = do
+    x <- fromIntegral <$> iterateRandom (round w) forbiddenW 60
+    y <- fromIntegral <$> iterateRandom (round h) forbiddenH 60
+    rot <- fromIntegral <$> getRandomValue (-100) 100
+    vx <- fromIntegral <$> getRandomValue (-100) 100
+    vy <- fromIntegral <$> getRandomValue (-100) 100
+    let rockObj = Object {objPos=V2 x y, objRot=0, objVel=V2 (vx * 0.002) (vy* 0.002), objRotVel=rot * 0.0002}
+    makeRock rockObj
+    where
+    objList = shipObj : map rockData otherRocks
+    forbiddenW = map (\(Object {objPos = (V2 w' _)}) -> round w') objList 
+    forbiddenH = map (\(Object {objPos = (V2 _ h')}) -> round h') objList
+    iterateRandom target forbidden dist = do
+        x <- getRandomValue 0 target
+        let test = foldr (\el res -> res || abs (x - el) <= dist) False forbidden
+        if not test then pure x else iterateRandom target forbidden dist
+
+updateRock :: Rock -> Rock
+updateRock rock = rock {rockData = dat {objRot = objRot dat + objRotVel dat,
+                                        objPos = pos}}
+    where
+    dat = rockData rock
+    pos = (\(V2 x y) -> V2 (donutClamp 0 w x) (donutClamp 0 h y)) (objPos dat + objVel dat)
+
+
 makeRock :: Object -> IO Rock
 makeRock dat = do
-    verts <- mapM (\_ -> getRandomValue 5 10) [0..11]
+    verts <- mapM (\_ -> getRandomValue 5 10) ([0..11]::[Integer])
     pure Rock { rockData = dat
         , rockVerts = snd (foldr (\v (x, l) -> (x + (pi/6), (fromIntegral v * 5, x):l)) (0, []) verts)
         }
@@ -97,7 +124,12 @@ drawRock rock = do
 main :: IO ()
 main = do
   setRandomSeed 15
-  rocks <- makeRock $ Object {objPos=V2 166 455, objRot=0, objVel=0, objRotVel=0}
+  rocks <- foldM
+    (\r _ -> do
+       x <- randomRock (shipData initialAppState) r 
+       pure (x : r))
+    []
+    [0..8]
   withWindow
     (floor w) 
     (floor h)
@@ -113,6 +145,7 @@ main = do
                 rot = objRot shipdata
                 vel = objVel shipdata
                 rotVel = objRotVel shipdata
+                rlist = rockList appstate
               in do
               drawing
                 ( do
@@ -120,7 +153,7 @@ main = do
                     mode2D cam2D 
                        ( do
                            drawShip shipdata
-                           drawRock rocks
+                           mapM_ drawRock rlist 
                            pure ()
                        ) 
                 )
@@ -133,15 +166,16 @@ main = do
                        ]
               let newRot = rot + rotVel
               let v = foldr ((\(x, y) (x', y') -> (x + x', y + y')) 
-                            . (\(a, b) -> (vector2Rotate (a * 0.5) newRot
-                                          , b * 0.01)) )
+                            . (\(a, b) -> (vector2Rotate (a * 0.2) newRot
+                                          , b * 0.002)) )
                             defaultK v_
-              let p = (\(V2 x y) -> V2 (donutClamp x 0 w) (donutClamp y 0 h)) $ pos + vel
+              let p = (\(V2 x y) -> V2 (donutClamp 0 w x) (donutClamp 0 h y)) $ pos + vel
               pure appstate { 
-                  shipData = shipdata {
+                    shipData = shipdata {
                      objRot = newRot, objPos = p, objVel = vel + fst v, objRotVel = rotVel + snd v }
+                  , rockList = map updateRock rlist
                 }
           )
-          initialAppState 
+          initialAppState {rockList = rocks}
     )
 
