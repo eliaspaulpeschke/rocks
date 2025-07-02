@@ -1,5 +1,6 @@
 {-# LANGUAGE PatternSynonyms #-}
 
+
 module Main where
 
 import Raylib.Core (clearBackground, disableCursor, isKeyPressed, isKeyDown, enableCursor, getKeyPressed, loadRandomSequence, setRandomSeed, getRandomValue)
@@ -12,9 +13,10 @@ import Linear (V3(V3), V2(V2))
 import Raylib.Util.Camera (cameraMove)
 import Raylib.Core.Textures (colorAlpha)
 import Raylib.Core.Shapes (drawTriangleLines, drawLineV)
-import Raylib.Util.Math (vector2Rotate)
+import Raylib.Util.Math (vector2Rotate, Vector (magnitude, vectorNormalize), normalize, vector2Angle, vector2Reflect)
 import Data.List.Split (divvy)
 import Control.Monad (foldM)
+import qualified Debug.Trace as T
 
 w :: Float
 w = 1400
@@ -45,6 +47,12 @@ data AppState = AppState {
     , shipData :: Object
     , rockList :: [Rock]
 }
+
+piClampRotation :: Float -> Float
+piClampRotation a
+    | a > pi = piClampRotation (- (pi - a))
+    | a < (-pi) = piClampRotation ((-pi) - a)
+    | otherwise = a
 
 initialAppState :: AppState
 initialAppState = AppState {
@@ -105,7 +113,7 @@ makeRock :: Object -> IO Rock
 makeRock dat = do
     verts <- mapM (\_ -> getRandomValue 5 10) ([0..11]::[Integer])
     pure Rock { rockData = dat
-        , rockVerts = snd (foldr (\v (x, l) -> (x + (pi/6), (fromIntegral v * 5, x):l)) (0, []) verts)
+        , rockVerts = snd (foldr (\v (x, l) -> (x + (pi/6), (fromIntegral v * 5, x):l)) (-pi, []) verts)
         }
 
 drawRock :: Rock -> IO ()
@@ -120,6 +128,25 @@ drawRock rock = do
     mk (v, x) = objPos obj + vector2Rotate (vector2Rotate (V2 0 v) x) (objRot obj)
     line (a:b:_) = drawLineV (mk a) (mk b) white
     line _ = pure ()
+
+collideRock :: (Rock, Object) -> (Rock, Object)
+collideRock (r, s) = if mag > 50 || mag > dirSize then (r, s)
+    else (r', s') 
+    where
+    mag = magnitude (sP - rP)
+    sP = objPos s
+    rP = objPos $ rockData r
+    dir = (\(V2 x y) -> atan2 y x) (sP - rP)
+    indexDir = dir - (objRot $ rockData r)
+    index = let r = (round (indexDir / (pi / 6)) + 6) in if r < 12 then r else 0
+    dirSize = fst $ rockVerts r !! index
+    p = vector2Rotate (pi / 2) dir
+    rV = objVel $ rockData r
+    sV = objVel s
+    rM = magnitude rV
+    sM = magnitude sV
+    s' = s { objVel = fmap (sM *) (vectorNormalize $ vector2Reflect sV p) }
+    r' = r { rockData = (rockData r) { objVel = fmap (rM *) (vectorNormalize $ vector2Reflect rV p )}}
 
 main :: IO ()
 main = do
@@ -170,11 +197,13 @@ main = do
                                           , b * 0.002)) )
                             defaultK v_
               let p = (\(V2 x y) -> V2 (donutClamp 0 w x) (donutClamp 0 h y)) $ pos + vel
-              pure appstate { 
+              let newstate = appstate { 
                     shipData = shipdata {
                      objRot = newRot, objPos = p, objVel = vel + fst v, objRotVel = rotVel + snd v }
                   , rockList = map updateRock rlist
                 }
+              let (rlist', ship') = foldr (\r (rs, s) -> let (r',s') = collideRock (r,s) in (r' : rs, s')) ([], shipData newstate) (rockList newstate) 
+              pure newstate {shipData = ship', rockList = rlist'}
           )
           initialAppState {rockList = rocks}
     )
