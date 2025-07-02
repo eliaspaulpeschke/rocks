@@ -129,6 +129,7 @@ drawRock rock = do
     line (a:b:_) = drawLineV (mk a) (mk b) white
     line _ = pure ()
 
+--TODO:: Pi clamp the directions 
 collideRock :: (Rock, Object) -> (Rock, Object)
 collideRock (r, s) = if mag > 50 || mag > dirSize then (r, s)
     else (r', s') 
