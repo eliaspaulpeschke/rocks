@@ -8,8 +8,9 @@ import Raylib.Core.Camera (updateCamera)
 import Raylib.Core.Models (drawGrid,  drawLine3D)
 import Raylib.Types (Camera3D (Camera3D), CameraMode (CameraModeFirstPerson), CameraProjection (CameraPerspective), pattern Vector3, Camera2D (Camera2D), pattern Vector2, Rectangle (Rectangle, rectangle'y, rectangle'x, rectangle'width, rectangle'height), KeyboardKey (KeyUp, KeyDown, KeyLeftControl, KeyRightControl, KeyM, KeyLeft, KeyR, KeyRight), Color)
 import Raylib.Util (drawing, mode3D, whileWindowOpen_, withWindow, mode2D)
-import Raylib.Util.Colors (orange, white, black, red, green)
-import Linear (V3(V3), V2(V2))
+import Raylib.Util.Colors (orange, white, black, red, green, yellow, blue)
+import Linear (V3(V3), V2(V2), Metric (dot), R1 (_x), R2 (_y))
+import Control.Lens
 import Raylib.Util.Camera (cameraMove)
 import Raylib.Core.Textures (colorAlpha)
 import Raylib.Core.Shapes (drawTriangleLines, drawLineV, checkCollisionCircles, checkCollisionRecs, checkCollisionCircleRec, drawRectangleRec)
@@ -36,7 +37,7 @@ donutWrap lower upper v
     | v > upper = donutWrap lower upper $ lower + (v - upper)
     | otherwise = v
 
-data CollisionType = CollisionCircle (V2 Float) Float | CollisionRect Rectangle -- | CollisionTri (V2 Float) (V2 Float) (V2 Float) 
+data CollisionType = CollisionCircle (V2 Float) Float | CollisionRect Rectangle | CollisionCustom CollisionType (CollisionType -> Bool)-- | CollisionTri (V2 Float) (V2 Float) (V2 Float) 
 
 class Collision a where
     collisionType :: a -> CollisionType
@@ -49,6 +50,9 @@ collide a b = innerCollide (collisionType a) (collisionType b)
     innerCollide (CollisionRect r1) (CollisionRect r2) = checkCollisionRecs r1 r2
     innerCollide (CollisionRect r1) (CollisionCircle p2 r2) = checkCollisionCircleRec p2 r2 r1
     innerCollide (CollisionCircle p1 r1) (CollisionRect r2) = checkCollisionCircleRec p1 r1 r2
+    innerCollide (CollisionCustom t1 fn1) (CollisionCustom t2 fn2) = fn1 t2 && fn2 t1
+    innerCollide (CollisionCustom _ fn) x = fn x
+    innerCollide x (CollisionCustom _ fn) = fn x
 
 class HasObject a where
     getObject :: a -> Object
@@ -60,10 +64,12 @@ collideReflect a b = if not (collide a b) then (a, b) else (a', b')
     aO = getObject a
     bO = getObject b
     p = vector2Rotate (pi / 2) $ (\(V2 x y) -> atan2 y x) (objPos aO - objPos bO)
+    testA = dot (objVel aO) (objPos aO - objPos bO) < 0
+    testB = dot (objVel bO) (objPos aO - objPos bO) < 0
     aV = objVel aO 
     bV = objVel bO
-    a' = setObject a $ aO { objVel = fmap (magnitude aV *) (vectorNormalize $ vector2Reflect aV p) }
-    b' = setObject b $ bO { objVel = fmap (magnitude bV *) (vectorNormalize $ vector2Reflect bV p) }
+    a' = if testA then a else setObject a $ aO { objVel = fmap (magnitude aV *) (vectorNormalize $ vector2Reflect aV p) }
+    b' = if testB then b else setObject b $ bO { objVel = fmap (magnitude bV *) (vectorNormalize $ vector2Reflect bV p) }
 
 data Object = Object {
       objPos :: V2 Float
@@ -255,9 +261,13 @@ main = do
                     clearBackground black 
                     mode2D cam2D 
                        ( do
-                           let (CollisionRect r) = collisionType stShip 
-                           drawRectangleRec r red
                            drawShip stShip
+                           let vecs = map (\n -> ((V2 (-100) 0), (V2 (100 * cos (pi * n/10)) (100 * sin (pi * n/10))))) [2, 5, 8]
+                               norm = V2 0 100
+                               start = V2 400 400
+                           drawLineV start (start + norm) red
+                           mapM_ (\(x, y) -> do drawLineV (start + x) (start + y) white
+                                                drawLineV (start + V2 (x ^._x + 200) (x ^._y)) (start + y) yellow ) vecs
                            mapM_ drawRock rlist 
                        ) 
                 )
