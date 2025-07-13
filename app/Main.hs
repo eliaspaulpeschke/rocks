@@ -58,18 +58,16 @@ class HasObject a where
     getObject :: a -> Object
     setObject :: a -> Object -> a
 
-collideReflect :: (Collision a, HasObject a, Collision b, HasObject b) => a -> b -> (a, b)
-collideReflect a b = if not (collide a b) then (a, b) else (a', b')
+collideReflect :: (Object, CollisionType) -> (Object, CollisionType) -> (Object, Object)
+collideReflect (aO, aC) (bO, bC) = if not (collide aC bC) then (aO, bO) else (aO', bO')
     where
-    aO = getObject a
-    bO = getObject b
-    p = vector2Rotate (pi / 2) $ (\(V2 x y) -> atan2 y x) (objPos aO - objPos bO)
-    testA = dot (objVel aO) (objPos aO - objPos bO) < 0
+    p = objPos aO - objPos bO -- vector2Rotate (pi / 2) $ (\(V2 x y) -> atan2 y x) (objPos aO - objPos bO)
+    testA = dot (objVel aO) (objPos aO - objPos bO) < 0 -- TODO finish this
     testB = dot (objVel bO) (objPos aO - objPos bO) < 0
     aV = objVel aO 
     bV = objVel bO
-    a' = if testA then a else setObject a $ aO { objVel = fmap (magnitude aV *) (vectorNormalize $ vector2Reflect aV p) }
-    b' = if testB then b else setObject b $ bO { objVel = fmap (magnitude bV *) (vectorNormalize $ vector2Reflect bV p) }
+    aO' = aO { objVel = fmap (magnitude aV *) (vectorNormalize $ vector2Reflect aV p) }
+    bO' = bO { objVel = fmap (magnitude bV *) (vectorNormalize $ vector2Reflect bV p) }
 
 data Object = Object {
       objPos :: V2 Float
@@ -93,7 +91,7 @@ instance HasObject Rock where
     setObject r o = r { rockData = o }
 
 instance Collision Rock where
-    collisionType r = CollisionCircle (objPos $ rockData r) 50
+    collisionType r = CollisionCircle (objPos $ rockData r) 50 
 
 data Ship = Ship {
       shipData :: Object
@@ -116,7 +114,6 @@ instance Collision Ship where
         (V2 px py) = objPos $ shipData s
         width = abs (x * cos r) + abs (y * sin r)
         height = abs (x * sin r) + abs (y * cos r)
-
 
 data AppState = AppState {
       camera2D :: Camera2D
@@ -156,13 +153,13 @@ drawShip s = do
     where
     (V2 x y) = shipSize s
     dat = shipData s
-    mk x = objPos dat + vector2Rotate x (objRot dat)
+    mk v = objPos dat + vector2Rotate v (objRot dat)
     tip = mk $ V2 0 (y * 0.5)
-    right = mk $ V2 (x * 0.2) (-y * 0.5) 
-    left = mk $ V2 (-x * 0.2) (-y * 0.5) 
+    right = mk $ V2 (x * 0.2) (negate y * 0.5) 
+    left = mk $ V2 (negate x * 0.2) (negate y * 0.5) 
     tip2 = mk $ V2 0 (y * 0.4)
-    right2 = mk $ V2 (x * 0.5) (-y * 0.3)
-    left2 = mk $ V2 (-x * 0.5) (-y * 0.3)
+    right2 = mk $ V2 (x * 0.5) (negate y * 0.3)
+    left2 = mk $ V2 (negate x * 0.5) (negate y * 0.3)
 
 randomRock :: Object -> [Rock] -> IO Rock
 randomRock shipObj otherRocks = do
@@ -189,7 +186,6 @@ updateRock rock = rock {rockData = dat {objRot = objRot dat + objRotVel dat,
     dat = rockData rock
     pos = (\(V2 x y) -> V2 (donutClamp 0 w x) (donutClamp 0 h y)) (objPos dat + objVel dat)
 
-
 makeRock :: Object -> IO Rock
 makeRock dat = do
     verts <- mapM (\_ -> getRandomValue 5 10) ([0..11]::[Integer])
@@ -210,24 +206,30 @@ drawRock rock = do
     line (a:b:_) = drawLineV (mk a) (mk b) white
     line _ = pure ()
 
-collideRock :: (Rock, Object) -> (Rock, Object)
-collideRock (r, s) = if mag > 50 || mag > dirSize then (r, s)
-    else (r', s') 
-    where
-    mag = magnitude (sP - rP)
-    sP = objPos s
-    rP = objPos $ rockData r
-    dir = (\(V2 x y) -> atan2 y x) (sP - rP)
-    indexDir = dir - (objRot $ rockData r)
-    index = let r = (round (indexDir / (pi / 6)) + 6) in donutWrap 0 11 r
-    dirSize = fst $ rockVerts r !! index
-    p = vector2Rotate (pi / 2) dir
-    rV = objVel $ rockData r
-    sV = objVel s
-    rM = magnitude rV
-    sM = magnitude sV
-    s' = s { objVel = fmap (sM *) (vectorNormalize $ vector2Reflect sV p) }
-    r' = r { rockData = (rockData r) { objVel = fmap (rM *) (vectorNormalize $ vector2Reflect rV p )}}
+steerShip :: Ship -> IO Ship
+steerShip s = do
+      let defaultK = (V2 0 0, 0)
+          sdata = shipData s
+          pos = objPos sdata
+          rot = objRot sdata
+          vel = objVel sdata
+          rotVel = objRotVel sdata
+      v_ <- mapM (\(k,d,u) -> keyboardVal k d u) [ 
+                  (KeyUp, defaultK, (V2 0 1, 0)) 
+                , (KeyDown, defaultK, (V2 0 (-1), 0)) 
+                , (KeyLeft, defaultK, (V2 0.01 0, -1)) 
+                , (KeyRight, defaultK, (V2 (-0.01) 0, 1)) 
+               ]
+      let newRot = rot + rotVel
+      let v = foldr ((\(x, y) (x', y') -> (x + x', y + y')) 
+                    . (\(a, b) -> (vector2Rotate (a * 0.2) newRot
+                                  , b * 0.002)) )
+                    defaultK v_
+      let p = (\(V2 x y) -> V2 (donutClamp 0 w x) (donutClamp 0 h y)) $ pos + vel
+      pure $ setObject s sdata {
+             objRot = newRot, objPos = p, objVel = vel + fst v, objRotVel = rotVel + snd v }
+
+
 
 main :: IO ()
 main = do
@@ -249,11 +251,6 @@ main = do
               let 
                 cam2D = camera2D appstate 
                 stShip = ship appstate
-                shipdata = getObject stShip
-                pos = objPos shipdata
-                rot = objRot shipdata
-                vel = objVel shipdata
-                rotVel = objRotVel shipdata
                 rlist = rockList appstate
               in do
               drawing
@@ -262,34 +259,14 @@ main = do
                     mode2D cam2D 
                        ( do
                            drawShip stShip
-                           let vecs = map (\n -> ((V2 (-100) 0), (V2 (100 * cos (pi * n/10)) (100 * sin (pi * n/10))))) [2, 5, 8]
-                               norm = V2 0 100
-                               start = V2 400 400
-                           drawLineV start (start + norm) red
-                           mapM_ (\(x, y) -> do drawLineV (start + x) (start + y) white
-                                                drawLineV (start + V2 (x ^._x + 200) (x ^._y)) (start + y) yellow ) vecs
                            mapM_ drawRock rlist 
                        ) 
                 )
-              let defaultK = (V2 0 0, 0)
-              v_ <- mapM (\(k,d,u) -> keyboardVal k d u) [ 
-                          (KeyUp, defaultK, (V2 0 1, 0)) 
-                        , (KeyDown, defaultK, (V2 0 (-1), 0)) 
-                        , (KeyLeft, defaultK, (V2 0.01 0, -1)) 
-                        , (KeyRight, defaultK, (V2 (-0.01) 0, 1)) 
-                       ]
-              let newRot = rot + rotVel
-              let v = foldr ((\(x, y) (x', y') -> (x + x', y + y')) 
-                            . (\(a, b) -> (vector2Rotate (a * 0.2) newRot
-                                          , b * 0.002)) )
-                            defaultK v_
-              let p = (\(V2 x y) -> V2 (donutClamp 0 w x) (donutClamp 0 h y)) $ pos + vel
 
-              let newstate = appstate { 
-                    ship = setObject stShip shipdata {
-                     objRot = newRot, objPos = p, objVel = vel + fst v, objRotVel = rotVel + snd v }
-                  , rockList = map updateRock rlist
-                }
+              s' <- steerShip stShip 
+              let rocks = map updateRock rlist
+
+--              let (ship'':rocks'') = foldr (\a b -> b) b t
 
               let (rlist', ship') = foldr (\r (rs, s) -> let (r',s') = collideReflect r s in (r' : rs, s')) ([], ship newstate) (rockList newstate) 
 
